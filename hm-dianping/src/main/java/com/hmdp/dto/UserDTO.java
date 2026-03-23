@@ -4,7 +4,7 @@ import lombok.Data;
 
 @Data
 public class   UserDTO {
-    private Long id;
-    private String nickName;
-    private String icon;
+    private Long id=0L;
+    private String nickName="";
+    private String icon="";
 }
