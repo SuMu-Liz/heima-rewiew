@@ -13,6 +13,7 @@ import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -62,7 +63,9 @@ public class CacheClient {
         }
 
         //存在 写入redis
-        this.set(key,r,time,unit);
+        // 随机TTL，基础 time + 随机0-10分钟（假设 time 单位是分钟）
+        long randomTtl = time + ThreadLocalRandom.current().nextInt(0, 11);
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(r), randomTtl, unit);
         return r;
     }
 
@@ -71,9 +74,13 @@ public class CacheClient {
     public <R,ID> R queryWithLogicalExpire(String keyPrefix,ID id, Class<R> type,Function<ID,R> dbFallback, Long time, TimeUnit unit){
         String key = keyPrefix+id;
         String json = stringRedisTemplate.opsForValue().get(key);
-
-        //判断是否存在
+        //判断是否为空值缓存（穿透防护）。之前数据库无数据而缓存了空字符串
+        if(json!=null &&"".equals(json)){
+            return null;
+        }
+        //判断key是否存在
         if(StrUtil.isBlank(json)){
+            stringRedisTemplate.opsForValue().set(key,"",CACHE_NULL_TTL, TimeUnit.MINUTES);
             return null;
         }
 
@@ -87,7 +94,7 @@ public class CacheClient {
             //未过期，直接返回店铺信息
             return r;
         }
-        //已过期，实现缓存重建
+        //已过期，实现缓存重建(击穿防护)
         String lockKey = LOCK_SHOP_KEY+id;
         //获取互斥锁
         boolean isLock = tryLock(lockKey);
@@ -98,11 +105,14 @@ public class CacheClient {
                 try {
                     //查数据库
                     R r1     = dbFallback.apply(id);
-                    //写入Redis
-                    this.setWithLogicalExpire(key,r1,time,unit);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }finally {
+                    if(r1==null){
+                        stringRedisTemplate.opsForValue().set(key,"",CACHE_NULL_TTL, TimeUnit.MINUTES);
+                    }else {
+                        //写入Redis
+                        this.setWithLogicalExpire(key, r1, time, unit);
+                    }
+                }
+                finally {
                     //释放锁
                     unlock(lockKey);
                 }
@@ -111,8 +121,6 @@ public class CacheClient {
             });
         }
         //失败 返沪过期的商铺信息
-
-
         return r;
     }
 

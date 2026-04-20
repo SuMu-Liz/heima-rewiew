@@ -22,6 +22,7 @@ import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.RedisConstants.*;
@@ -48,8 +49,11 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 //                .queryWithPassThrough(CACHE_SHOP_KEY,id,Shop.class,id2->getById(id2),CACHE_SHOP_TTL, TimeUnit.MINUTES);
 //        互斥锁解决缓存击穿
 //        Shop shop = queryWithMutex(id);
-        //逻辑过期解决缓存击穿
-        Shop shop = cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY,id,Shop.class,id2->getById(id2),CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        //逻辑过期解决缓存击穿,CACHE_SHOP_TTL是逻辑过期时间
+        Shop shop = cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY,id,Shop.class,
+                id2->getById(id2),
+                CACHE_SHOP_TTL, TimeUnit.MINUTES);
+//        Shop shop = cacheClient.queryWithPassThrough(CACHE_SHOP_KEY, id, Shop.class, id2 -> getById(id2), CACHE_SHOP_TTL, TimeUnit.MINUTES);
         if(shop==null){
             return Result.fail("店铺不存在");
         }
@@ -182,7 +186,9 @@ private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixed
         }
 
         //存在 写入redis
-        stringRedisTemplate.opsForValue().set(key,JSONUtil.toJsonStr(shop),CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        // 基础TTL 30分钟，随机增加0-10分钟
+        long ttl = CACHE_SHOP_TTL + ThreadLocalRandom.current().nextInt(0, 11);
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), ttl, TimeUnit.MINUTES);
         return shop;
     }
 
